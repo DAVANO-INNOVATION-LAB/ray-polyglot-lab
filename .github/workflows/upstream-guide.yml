@@ -1,0 +1,86 @@
+name: Validate limited upstream guide
+on:
+  push:
+    branches: ['review/ray-polyglot-guide']
+permissions:
+  contents: read
+jobs:
+  real-ray:
+    name: Guide Python ${{ matrix.python }} Java ${{ matrix.java }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.11'
+            java: '17'
+          - python: '3.12'
+            java: '21'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Install isolated example dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/example-venv"
+          echo "$RUNNER_TEMP/example-venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/example-venv/bin/python" -m pip install 'ray==2.60.0' 'pytest==8.3.5' 'ruff==0.12.2' 'black==22.10.0'
+      - name: Test exact guide including real Ray
+        run: python -m pytest -q contributions/polyglot/review
+      - name: Run full guide CLI
+        run: python contributions/polyglot/review/run_guide.py
+  upstream-docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ray-project/ray
+          ref: 7984716433dc3f4a057da34a896954e1ee3eae9a
+          path: ray
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify and apply exact patch
+        working-directory: ray
+        run: |
+          test "$(git rev-parse HEAD)" = 7984716433dc3f4a057da34a896954e1ee3eae9a
+          echo '99387ec3225fa9623ba4ede6ed67a371efe2866a67b3a9dcd364f0b4c73047f8  ../contributions/polyglot/ray-polyglot-guide.patch' | sha256sum -c -
+          git apply --check ../contributions/polyglot/ray-polyglot-guide.patch
+          git apply ../contributions/polyglot/ray-polyglot-guide.patch
+          git diff --check
+      - name: Install isolated locked documentation dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/docs-venv"
+          echo "$RUNNER_TEMP/docs-venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/docs-venv/bin/python" -m pip install --require-hashes -r ray/doc/requirements-doc.lock.txt
+      - name: Check exact documentation environment
+        working-directory: ray/doc
+        run: make rtd-doctor
+      - name: Build complete upstream documentation
+        working-directory: ray/doc
+        env:
+          PYTHONFAULTHANDLER: '1'
+        run: |
+          set -o pipefail
+          make rtd-build SPHINX_JOBS=2 2>&1 | tee "$RUNNER_TEMP/ray-doc-build.log"
+      - name: Preserve documentation build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ray-doc-build-log
+          path: ${{ runner.temp }}/ray-doc-build.log
+          if-no-files-found: ignore
+          retention-days: 7

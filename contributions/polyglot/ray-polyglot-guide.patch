@@ -1,0 +1,424 @@
+diff --git a/doc/source/core/examples/index.md b/doc/source/core/examples/index.md
+--- a/doc/source/core/examples/index.md
++++ b/doc/source/core/examples/index.md
+@@ -34,6 +34,7 @@
+ ```{list-table}
+ * - {doc}`map_reduce`
+ * - {doc}`web_crawler`
++* - {doc}`Run Java and C++ batch programs with Ray <polyglot-batch>`
+ ```
+ 
+ 
+diff --git a/doc/source/core/examples/polyglot-batch.md b/doc/source/core/examples/polyglot-batch.md
+new file mode 100644
+--- /dev/null
++++ b/doc/source/core/examples/polyglot-batch.md
+@@ -0,0 +1,408 @@
++---
++myst:
++  html_meta:
++    description: "Compile trusted Java and C++ batch programs, package their artifacts, and run them from Ray Python tasks with explicit timeouts and pending-task limits."
++---
++
++<!-- SPDX-License-Identifier: Apache-2.0 -->
++
++(ray-core-polyglot-batch)=
++
++# Run Java and C++ batch programs with Ray
++
++This guide runs compiled Java and C++ programs from Ray Python tasks and checks their integer statistics against Python. Use this pattern when you have a trusted executable with a small batch interface and don't need Ray's native {doc}`cross-language APIs <../cross-language>`.
++
++<!-- Maintainers: Ray CI doesn't test this end-to-end guide. Full-guide validation is pending. Before submission, run every step on a normal Linux host and replace this comment with the Ray version verified by the human contributor. -->
++
++## Prepare a local directory
++
++Use Linux with Python 3.11 or 3.12, a full Java Development Kit version 17 or later, and a C++17 compiler available as `g++`. Keep Ray authentication enabled and run on a trusted network. Starting a local instance doesn't provide network isolation.
++
++Create an empty directory for the three source files below. Install Ray in a virtual environment:
++
++```bash
++mkdir ray-polyglot-example
++cd ray-polyglot-example
++python -m venv .venv
++. .venv/bin/activate
++python -m pip install 'ray==2.60.0'
++```
++
++## Define the worker protocol
++
++Each process reads one request from standard input and exits after writing one JSON result. The request starts with `RAYPOLY1`, followed by a count and that many integers, separated by whitespace. The workers reject requests larger than 65,536 bytes, batches larger than 4096 integers, and values outside the inclusive range from -1,000,000 to 1,000,000. These bounds keep each batch's sum and sum of squares within a signed 64-bit integer.
++
++Save the following program as `stats_worker.cpp`:
++
++:::{dropdown} C++ worker source
++```cpp
++// SPDX-License-Identifier: Apache-2.0
++#include <charconv>
++#include <cstdint>
++#include <iostream>
++#include <sstream>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++static std::int64_t number(const std::string &token) {
++    const auto offset = (!token.empty() && token[0] == '-') ? 1U : 0U;
++    if (token.size() <= offset || (token.size() > offset + 1 && token[offset] == '0')) {
++        throw std::invalid_argument("number");
++    }
++    for (std::size_t i = offset; i < token.size(); ++i) {
++        if (token[i] < '0' || token[i] > '9') throw std::invalid_argument("number");
++    }
++    std::int64_t value = 0;
++    const auto parsed = std::from_chars(token.data(), token.data() + token.size(), value);
++    if (parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size()) {
++        throw std::invalid_argument("number");
++    }
++    return value;
++}
++
++int main() {
++    try {
++        std::string input;
++        char c = 0;
++        while (std::cin.get(c)) {
++            auto byte = static_cast<unsigned char>(c);
++            if (input.size() == 65536 || byte > 127 ||
++                (byte < 32 && c != '\t' && c != '\n' && c != '\r')) {
++                throw std::invalid_argument("request");
++            }
++            input.push_back(c);
++        }
++        std::istringstream stream(input);
++        std::vector<std::string> tokens;
++        std::string token;
++        while (stream >> token) tokens.push_back(token);
++        if (tokens.size() < 2 || tokens[0] != "RAYPOLY1") {
++            throw std::invalid_argument("request");
++        }
++        auto n = number(tokens[1]);
++        if (n < 0 || n > 4096 || tokens.size() != static_cast<std::size_t>(n + 2)) {
++            throw std::invalid_argument("count");
++        }
++        std::int64_t sum = 0;
++        std::int64_t squares = 0;
++        for (std::size_t i = 2; i < tokens.size(); ++i) {
++            auto value = number(tokens[i]);
++            if (value < -1000000 || value > 1000000) throw std::invalid_argument("value");
++            sum += value;
++            squares += value * value;
++        }
++        std::cout << "{\"protocol\":\"RAYPOLY1\",\"language\":\"cpp\",\"count\":" << n
++                  << ",\"sum\":" << sum << ",\"sum_squares\":" << squares << "}\n";
++        return 0;
++    } catch (const std::exception &) {
++        std::cerr << "invalid request\n";
++        return 2;
++    }
++}
++```
++:::
++
++Save the next program as `StatsWorker.java`:
++
++:::{dropdown} Java worker source
++```java
++// SPDX-License-Identifier: Apache-2.0
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++
++/** Independent exact-integer worker. No Ray native bindings or dependencies. */
++public final class StatsWorker {
++    private static long number(String token) {
++        if (!token.matches("-?(0|[1-9][0-9]*)")) {
++            throw new IllegalArgumentException();
++        }
++        return Long.parseLong(token);
++    }
++
++    public static void main(String[] args) throws IOException {
++        try {
++            byte[] bytes = System.in.readNBytes(65537);
++            if (bytes.length > 65536) throw new IllegalArgumentException();
++            for (byte b : bytes) {
++                if (b < 0 || (b < 32 && b != 9 && b != 10 && b != 13)) {
++                    throw new IllegalArgumentException();
++                }
++            }
++            String[] tokens = new String(bytes, StandardCharsets.US_ASCII).trim().split("\\s+");
++            if (tokens.length < 2 || !tokens[0].equals("RAYPOLY1")) {
++                throw new IllegalArgumentException();
++            }
++            long n = number(tokens[1]);
++            if (n < 0 || n > 4096 || tokens.length != n + 2) {
++                throw new IllegalArgumentException();
++            }
++            long sum = 0;
++            long squares = 0;
++            for (int i = 2; i < tokens.length; i++) {
++                long value = number(tokens[i]);
++                if (value < -1000000 || value > 1000000) throw new IllegalArgumentException();
++                sum += value;
++                squares += value * value;
++            }
++            System.out.printf(java.util.Locale.ROOT, "{\"protocol\":\"RAYPOLY1\",\"language\":\"java\","
++                + "\"count\":%d,\"sum\":%d,\"sum_squares\":%d}%n", n, sum, squares);
++        } catch (IllegalArgumentException ex) {
++            System.err.println("invalid request");
++            System.exit(2);
++        }
++    }
++}
++```
++:::
++
++## Define the Python driver
++
++Save the following file as `polyglot_driver.py`. The `batch_stats` function requests one logical CPU and sets `max_retries=0`. Ray schedules the Python task, and that task starts the selected executable. CPU requests are scheduler accounting, not CPU isolation.
++
++The driver sends at most eight pending tasks by default. It waits for results with `ray.wait`, adds their statistics, and compares the totals with an independent Python calculation. Empty input still produces one empty batch per language.
++
++:::{dropdown} Python driver source
++```python
++# SPDX-License-Identifier: Apache-2.0
++"""Run only the trusted Java and C++ programs included in this guide."""
++
++import argparse
++import json
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import ray
++
++MAX_ITEMS = 4096
++MAX_VALUE = 1_000_000
++
++
++def encode(values):
++    if len(values) > MAX_ITEMS or any(
++        type(value) is not int or abs(value) > MAX_VALUE for value in values
++    ):
++        raise ValueError("Expected at most 4096 integers in [-1000000, 1000000]")
++    return ("RAYPOLY1 " + str(len(values)) + " " + " ".join(map(str, values))).encode(
++        "ascii"
++    )
++
++
++def expected(values):
++    encode(values)
++    return {
++        "count": len(values),
++        "sum": sum(values),
++        "sum_squares": sum(value * value for value in values),
++    }
++
++
++def run_worker(language, values, bundle, timeout_s=10):
++    payload = encode(values)
++    bundle = Path(bundle).resolve()
++    if language == "cpp":
++        command = [str(bundle / "native" / "stats_worker")]
++    elif language == "java":
++        java = shutil.which("java")
++        if java is None:
++            raise RuntimeError("Java is missing on this node")
++        command = [java, "-Xmx64m", "-cp", str(bundle / "java"), "StatsWorker"]
++    else:
++        raise ValueError("Expected java or cpp")
++    try:
++        # Keep the child in the Ray worker's process group. These programs
++        # don't spawn descendants. communicate() drains both output pipes.
++        process = subprocess.run(
++            command, input=payload, capture_output=True, timeout=timeout_s, check=False
++        )
++    except subprocess.TimeoutExpired:
++        # subprocess.run kills and waits for its direct child on timeout.
++        raise RuntimeError("External worker timed out") from None
++    if process.returncode:
++        # Don't include arbitrary child output in a Ray exception.
++        raise RuntimeError(f"External worker exited with status {process.returncode}")
++    if len(process.stdout) > 1024 or process.stderr:
++        raise RuntimeError("Unexpected worker output")
++    try:
++        result = json.loads(process.stdout)
++    except (UnicodeDecodeError, json.JSONDecodeError):
++        raise RuntimeError("Invalid worker JSON") from None
++    reference = expected(values)
++    if (
++        not isinstance(result, dict)
++        or set(result) != {"protocol", "language", *reference}
++        or result["protocol"] != "RAYPOLY1"
++        or result["language"] != language
++        or any(type(result[key]) is not int for key in reference)
++        or any(result[key] != value for key, value in reference.items())
++    ):
++        raise RuntimeError("Worker result doesn't match the Python baseline")
++    return reference
++
++
++@ray.remote(num_cpus=1, max_retries=0)
++def batch_stats(language, values):
++    stats = run_worker(language, values, Path.cwd())
++    return {
++        "language": language,
++        "stats": stats,
++        "worker_pid": os.getpid(),
++        "node_id": ray.get_runtime_context().get_node_id(),
++    }
++
++
++def compare(values, batch_size=256, window=8):
++    if type(batch_size) is not int or not 1 <= batch_size <= MAX_ITEMS:
++        raise ValueError("Invalid batch size")
++    if type(window) is not int or not 1 <= window <= 128:
++        raise ValueError("Invalid pending-task limit")
++    # Validate all inputs before submitting any tasks.
++    for start in range(0, max(1, len(values)), batch_size):
++        encode(values[start : start + batch_size])
++    totals = {
++        language: {"count": 0, "sum": 0, "sum_squares": 0}
++        for language in ("java", "cpp")
++    }
++    baseline = {
++        "count": len(values),
++        "sum": sum(values),
++        "sum_squares": sum(value * value for value in values),
++    }
++    pending = []
++    worker_pids = set()
++    node_ids = set()
++    completed = 0
++
++    def collect():
++        nonlocal completed
++        ready, rest = ray.wait(pending, num_returns=1, timeout=60)
++        if not ready:
++            raise TimeoutError("No Ray task completed within 60 seconds")
++        pending[:] = rest
++        result = ray.get(ready[0])
++        completed += 1
++        worker_pids.add(result["worker_pid"])
++        node_ids.add(result["node_id"])
++        for key, value in result["stats"].items():
++            totals[result["language"]][key] += value
++
++    try:
++        for start in range(0, max(1, len(values)), batch_size):
++            batch = values[start : start + batch_size]
++            for language in totals:
++                pending.append(batch_stats.remote(language, batch))
++                if len(pending) >= window:
++                    collect()
++        while pending:
++            collect()
++    except BaseException:
++        for ref in pending:
++            ray.cancel(ref, force=False)
++        raise
++    if any(total != baseline for total in totals.values()):
++        raise RuntimeError("Aggregated results don't match")
++    return {
++        "verified": True,
++        "totals": totals,
++        "task_count": completed,
++        "worker_pids": sorted(worker_pids),
++        "node_ids": sorted(node_ids),
++    }
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--bundle", type=Path, required=True)
++    parser.add_argument("--direct", action="store_true")
++    args = parser.parse_args()
++    values = list(range(-2048, 2048))
++    if args.direct:
++        print(
++            json.dumps(
++                {
++                    lang: run_worker(lang, values, args.bundle)
++                    for lang in ("java", "cpp")
++                }
++            )
++        )
++        return
++    # Start a new local instance rather than connecting to an existing cluster.
++    ray.init(
++        address="local",
++        num_cpus=2,
++        include_dashboard=False,
++        runtime_env={"working_dir": str(args.bundle.resolve())},
++    )
++    try:
++        print(json.dumps(compare(values), indent=2))
++    finally:
++        ray.shutdown()
++
++
++if __name__ == "__main__":
++    main()
++```
++:::
++
++## Compile and stage the artifacts
++
++Run these commands in the directory containing the three source files. They create a fresh bundle, compile the Java and C++ programs, and copy only the driver module. The fresh directory avoids shipping unrelated source files, credentials, or previous build outputs.
++
++```bash
++set -eu
++bundle="$(mktemp -d "$PWD/polyglot-bundle.XXXXXX")"
++mkdir "$bundle/native" "$bundle/java"
++g++ -std=c++17 -O2 -Wall -Wextra -Werror -pedantic \
++    stats_worker.cpp -o "$bundle/native/stats_worker"
++javac --release 17 -Xlint:all -Werror -d "$bundle/java" StatsWorker.java
++cp polyglot_driver.py "$bundle/"
++printf '%s\n' "$bundle"
++```
++
++Keep the `bundle` variable in the same shell for the next commands. Ray sends this directory to its workers through `runtime_env.working_dir`. The Java runtime and the C++ executable's dynamic libraries must already exist on every node. Compiling a native executable on one machine doesn't establish compatibility with another operating system, architecture, or C library.
++
++## Check the programs without Ray
++
++Run both executables directly through the driver first:
++
++```bash
++python polyglot_driver.py --bundle "$bundle" --direct
++```
++
++Both programs return these statistics for the integers from -2048 through 2047:
++
++```json
++{"count": 4096, "sum": -2048, "sum_squares": 5726623744}
++```
++
++This check isolates compiler, Java runtime, native-library, and protocol errors before you start Ray.
++
++## Run the Ray tasks
++
++Run the driver without `--direct`:
++
++```bash
++python polyglot_driver.py --bundle "$bundle"
++```
++
++The driver starts a new local Ray instance with two CPU scheduling slots. It divides 4096 integers into 16 batches and submits each batch to both languages, for 32 tasks. A successful run returns `verified: true`, matching totals, and the Python worker process IDs and node IDs. Those process IDs identify the Ray workers, not the Java or C++ child processes. Different worker processes on one node don't establish multi-machine execution or a performance improvement.
++
++The script shuts down its local Ray instance in a `finally` block. To remove the generated artifacts afterward, delete only the temporary directory printed by the compile step.
++
++## Understand the operating limits
++
++The example starts a JVM for every Java batch. Startup cost can dominate small workloads. The `-Xmx64m` setting limits the Java heap, not total resident memory. Measure your own workload before choosing batch sizes or adding persistent workers.
++
++:::{caution}
++Run only the two trusted programs included in this guide. The driver buffers process output in memory and checks its size after the child exits. That check isn't a hard memory limit for a hostile or modified executable. The adapter isn't a security sandbox, and child processes inherit the Ray worker's environment.
++:::
++
++`subprocess.run` kills and reaps its direct child after a subprocess timeout. These programs don't spawn descendants. The driver doesn't create a new process session, so it doesn't intentionally detach the children from Ray's worker process group. See {doc}`Lifetimes of user-spawned processes <../user-spawn-processes>` for cleanup behavior when a Ray worker exits. This guide doesn't validate worker-crash cleanup or provide an orphan-free guarantee.
++
++If a task fails, the driver requests cooperative cancellation of the remaining tasks. Cancellation isn't immediate termination of native code. The per-process timeout and the wait for a completed task serve different purposes, and neither is a hard overall job deadline.
++
++Automatic task retries are disabled for this example. This isn't an exactly-once execution guarantee. Define idempotency and recovery behavior before adapting the pattern to programs with external side effects.
++
++The example uses a local instance. Multi-node deployment, native Ray language APIs, worker-crash behavior, and throughput remain separate validation tasks. For dependency packaging, see {doc}`Handling dependencies <../handling-dependencies>`.
