@@ -2,7 +2,7 @@
 
 Date: 2026-11-10. This document distinguishes executed tests from intended behavior.
 
-## Executed successfully
+## Local checks executed successfully
 
 - Python 3.12.14, Ray 2.60.0, pytest 8.3.5, Ruff 0.12.2.
 - GCC 14.2.0 compiled the C++ worker with C++17, warnings-as-errors and pedantic checks.
@@ -42,12 +42,27 @@ container's unreachable advertised hostname; it did not resolve the socket limit
 Thus 77 passing tests do **not** establish an end-to-end distributed Ray pass.
 No fake Ray replacement or `local_mode` was used to claim a pass.
 
-## CI and remaining validation
+## Hosted full-Ray validation passed
 
 The committed GitHub Actions workflow compiles on Ubuntu 24.04 with Java 17 and
 Python 3.12, runs the entire test suite including real Ray, and runs a 4096-item
-demo. Its actual result must be checked for the published commit; merely adding
-the workflow does not establish a CI pass.
+demo. [Run 42918940891](https://github.com/DAVANO-INNOVATION-LAB/ray-polyglot-lab/actions/runs/42918940891)
+completed successfully for implementation commit
+`88b905b10107201c2f9416fa174e977330448048`:
+
+- **83 tests passed** in 9.19 seconds, including all six full-Ray integration tests.
+- Java 17.0.21+9 and Python 3.12.16 on Ubuntu 24.04.5.
+- The demo executed **32 real Ray tasks** on two worker processes on one node.
+- Each language processed 4096 integers: sum `31464857`, sum of squares
+  `1330024606232077`, matching the independent Python baseline exactly.
+- Runtime artifact transfer succeeded; Ray token authentication remained enabled.
+- Compile, lint, formatting, full tests, and the CLI demo all passed.
+
+This resolves the end-to-end validation gap on a normal Linux runner. The local
+workspace socket restriction described above still applies. It is not a test
+of multiple machines, a performance benchmark, or validation of native Ray APIs.
+
+## Remaining validation
 
 Not yet validated: multi-node deployment, throughput/speedup, native Ray Java/C++
 API behavior, worker-death orphan handling, heterogeneous ABIs, production

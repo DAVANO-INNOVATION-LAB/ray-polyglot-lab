@@ -10,6 +10,10 @@ This is a **subprocess adapter**, not Ray's native Java/C++ cross-language API.
 It needs no Ray fork, JNI integration, Maven dependency, or C++ Ray SDK build.
 Native Ray APIs are a separate possible follow-on.
 
+**Verified:** [hosted CI](https://github.com/DAVANO-INNOVATION-LAB/ray-polyglot-lab/actions/runs/42918940891)
+passed all 83 tests, including real Ray execution. The 4096-item demo completed
+32 tasks on two worker processes with matching Java, C++, and Python results.
+
 ## Run it
 
 Requirements: Linux, Python 3.11 or 3.12, a JDK 17+, and a C++17 compiler (`g++`).
