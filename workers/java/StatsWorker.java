@@ -1,5 +1,6 @@
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 /** Independent exact-integer worker. No Ray native bindings or dependencies. */
 public final class StatsWorker {
@@ -35,7 +36,7 @@ public final class StatsWorker {
                 sum += value;
                 squares += value * value;
             }
-            System.out.printf("{\"protocol\":\"RAYPOLY1\",\"language\":\"java\","
+            System.out.printf(Locale.ROOT, "{\"protocol\":\"RAYPOLY1\",\"language\":\"java\","
                 + "\"count\":%d,\"sum\":%d,\"sum_squares\":%d}%n", n, sum, squares);
         } catch (IllegalArgumentException ex) {
             System.err.println("invalid request");

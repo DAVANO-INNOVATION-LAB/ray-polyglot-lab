@@ -1,10 +1,11 @@
+import json
 import random
 import shutil
 import subprocess
 
 import pytest
 
-from ray_polyglot.protocol import expected
+from ray_polyglot.protocol import PROTOCOL, encode, expected
 from ray_polyglot.runner import run_native
 
 
@@ -13,6 +14,28 @@ from ray_polyglot.runner import run_native
 def test_compiled_worker(language, values, bundle):
     result = run_native(language, values, bundle=bundle)
     assert {key: result[key] for key in expected(values)} == expected(values)
+
+
+@pytest.mark.parametrize("locale", ["en-US", "de-DE", "ar-EG"])
+@pytest.mark.parametrize("values", [[], [-1, 2, -3], [-1000000] * 12])
+def test_java_worker_json_is_locale_independent(locale, values, bundle):
+    language, country = locale.split("-")
+    command = [
+        shutil.which("java"),
+        f"-Duser.language={language}",
+        f"-Duser.country={country}",
+        "-cp",
+        str(bundle / "java"),
+        "StatsWorker",
+    ]
+    result = subprocess.run(
+        command, input=encode(values), capture_output=True, check=True, timeout=10
+    )
+    response = json.loads(result.stdout)
+    assert result.stdout.isascii()
+    statistics = expected(values)
+    assert response == {"protocol": PROTOCOL, "language": "java", **statistics}
+    assert all(type(response[key]) is int for key in statistics)
 
 
 def test_deterministic_randomized_parity(bundle):
