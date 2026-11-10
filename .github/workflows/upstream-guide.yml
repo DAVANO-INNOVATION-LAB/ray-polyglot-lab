@@ -37,6 +37,9 @@ jobs:
         run: python -m pytest -q contributions/polyglot/review
       - name: Run full guide CLI
         run: python contributions/polyglot/review/run_guide.py
+      - name: Check C++ sanitizers
+        if: matrix.python == '3.12'
+        run: python contributions/polyglot/review/check_cpp_sanitizers.py
   upstream-docs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -57,7 +60,7 @@ jobs:
         working-directory: ray
         run: |
           test "$(git rev-parse HEAD)" = 7984716433dc3f4a057da34a896954e1ee3eae9a
-          echo '99387ec3225fa9623ba4ede6ed67a371efe2866a67b3a9dcd364f0b4c73047f8  ../contributions/polyglot/ray-polyglot-guide.patch' | sha256sum -c -
+          echo '12bf7514b69adacba26f61ffd9d1ae6b5b1fa89f86af6a5e3630cdd96479260b  ../contributions/polyglot/ray-polyglot-guide.patch' | sha256sum -c -
           git apply --check ../contributions/polyglot/ray-polyglot-guide.patch
           git apply ../contributions/polyglot/ray-polyglot-guide.patch
           git diff --check

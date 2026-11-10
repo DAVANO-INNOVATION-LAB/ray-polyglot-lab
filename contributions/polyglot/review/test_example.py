@@ -28,16 +28,12 @@ def example(tmp_path_factory):
         matches = [content for tag, content in blocks if tag == language]
         assert len(matches) == 1
         (root / filename).write_text(matches[0])
-    build = next(
-        content for tag, content in blocks if tag == "bash" and "mktemp" in content
-    )
+    build = next(content for tag, content in blocks if tag == "bash" and "mktemp" in content)
     built = subprocess.run(
         ["bash", "-c", build], cwd=root, capture_output=True, text=True, check=True
     )
     bundle = Path(built.stdout.strip())
-    spec = importlib.util.spec_from_file_location(
-        "polyglot_driver", root / "polyglot_driver.py"
-    )
+    spec = importlib.util.spec_from_file_location("polyglot_driver", root / "polyglot_driver.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -45,17 +41,13 @@ def example(tmp_path_factory):
 
 
 @pytest.mark.parametrize("language", ["java", "cpp"])
-@pytest.mark.parametrize(
-    "values", [[], [0], [-1, 2, -3], [1000000] * 4096, [-1000000] * 4096]
-)
+@pytest.mark.parametrize("values", [[], [0], [-1, 2, -3], [1000000] * 4096, [-1000000] * 4096])
 def test_native_parity(example, language, values):
     module, bundle, _ = example
     assert module.run_worker(language, values, bundle) == module.expected(values)
 
 
-@pytest.mark.parametrize(
-    "values", [[True], [1.0], [None], [1000001], [-1000001], [0] * 4097]
-)
+@pytest.mark.parametrize("values", [[True], [1.0], [None], [1000001], [-1000001], [0] * 4097])
 def test_invalid_input(example, values):
     module, bundle, _ = example
     with pytest.raises(ValueError):
@@ -126,9 +118,7 @@ def test_relocated_bundle(example, tmp_path):
         "polyglot_driver.py",
     }
     for language in ("java", "cpp"):
-        assert module.run_worker(language, [-3, 2, 7], relocated) == module.expected(
-            [-3, 2, 7]
-        )
+        assert module.run_worker(language, [-3, 2, 7], relocated) == module.expected([-3, 2, 7])
 
 
 def fake_worker(tmp_path, code):

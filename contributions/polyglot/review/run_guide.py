@@ -21,9 +21,7 @@ with tempfile.TemporaryDirectory(prefix="ray-polyglot-guide-") as temporary:
         matches = [content for tag, content in blocks if tag == language]
         assert len(matches) == 1
         (source / filename).write_text(matches[0])
-    build = next(
-        content for tag, content in blocks if tag == "bash" and "mktemp" in content
-    )
+    build = next(content for tag, content in blocks if tag == "bash" and "mktemp" in content)
     result = subprocess.run(
         ["bash", "-c", build], cwd=source, capture_output=True, text=True, check=True
     )
