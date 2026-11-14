@@ -1,7 +1,7 @@
 name: Validate limited upstream guide
 on:
   push:
-    branches: ['review/ray-polyglot-guide']
+    branches: ['validation/ray-master-20261114']
 permissions:
   contents: read
 jobs:
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ray-project/ray
-          ref: 7984716433dc3f4a057da34a896954e1ee3eae9a
+          ref: bdae418d50a7ede162cd6ece6e344630b551179c
           path: ray
           persist-credentials: false
       - uses: actions/setup-python@v5
@@ -59,7 +59,7 @@ jobs:
       - name: Verify and apply exact patch
         working-directory: ray
         run: |
-          test "$(git rev-parse HEAD)" = 7984716433dc3f4a057da34a896954e1ee3eae9a
+          test "$(git rev-parse HEAD)" = bdae418d50a7ede162cd6ece6e344630b551179c
           echo '12bf7514b69adacba26f61ffd9d1ae6b5b1fa89f86af6a5e3630cdd96479260b  ../contributions/polyglot/ray-polyglot-guide.patch' | sha256sum -c -
           git apply --check ../contributions/polyglot/ray-polyglot-guide.patch
           git apply ../contributions/polyglot/ray-polyglot-guide.patch
@@ -87,3 +87,33 @@ jobs:
           path: ${{ runner.temp }}/ray-doc-build.log
           if-no-files-found: ignore
           retention-days: 7
+
+  upstream-precommit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ray-project/ray
+          ref: bdae418d50a7ede162cd6ece6e344630b551179c
+          path: ray
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply exact guide patch
+        working-directory: ray
+        run: |
+          echo '12bf7514b69adacba26f61ffd9d1ae6b5b1fa89f86af6a5e3630cdd96479260b  ../contributions/polyglot/ray-polyglot-guide.patch' | sha256sum -c -
+          git apply --check ../contributions/polyglot/ray-polyglot-guide.patch
+          git apply ../contributions/polyglot/ray-polyglot-guide.patch
+          git diff --check
+      - name: Run upstream pre-commit for changed files
+        working-directory: ray
+        run: |
+          python -m venv "$RUNNER_TEMP/precommit-venv"
+          "$RUNNER_TEMP/precommit-venv/bin/python" -m pip install pre-commit==3.5.0
+          "$RUNNER_TEMP/precommit-venv/bin/pre-commit" run --files doc/source/core/examples/index.md doc/source/core/examples/polyglot-batch.md
