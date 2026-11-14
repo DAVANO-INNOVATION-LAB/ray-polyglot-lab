@@ -94,6 +94,6 @@ from the package. The JVM and native dynamic libraries are **not** shipped.
 ## Project status
 
 Original experimental code for DAVANO Innovation Lab. Not affiliated with or
-endorsed by the Ray project. No upstream PR has been submitted. No open-source
-license grant is asserted by this private prototype; select a license before
-publishing it publicly or contributing code upstream.
+endorsed by the Ray project. No upstream PR has been submitted. This repository is public.
+No repository-wide open-source license grant is asserted. A repository-wide
+license remains a separate decision from any limited upstream contribution.
